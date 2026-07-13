@@ -78,9 +78,8 @@ int main(int argc, char** argv)
         options.relative_tolerance = 1e-10;
         options.block_size = 256;
 
-        const int warps_per_block = options.block_size / 32;
-        options.grid_size = (n + warps_per_block - 1) /
-            warps_per_block;
+        options.grid_size = (n + options.block_size - 1) /
+            options.block_size;
 
         std::cout
             << "========================================\n"
