@@ -2,7 +2,9 @@
 
 本项目使用 CUDA 在 GPU 上实现 Jacobi 迭代法，用于求解稀疏线性方程组
 
-$$Ax=b.$$
+$$
+Ax=b.
+$$
 
 矩阵使用 CSR（Compressed Sparse Row）格式存储。Jacobi 更新、残差计算、收敛判断和停止控制均在 GPU 内完成，CPU 只负责：
 
@@ -18,9 +20,7 @@ $$Ax=b.$$
 将矩阵 $A$ 分解为
 
 $$
-
 A=D+L+U,
-
 $$
 
 其中 $D$ 是对角部分，$L$ 和 $U$ 分别是严格下三角和严格上三角部分。
@@ -28,7 +28,6 @@ $$
 Jacobi 迭代格式为
 
 $$
-
 x_i^{(k+1)}
 =
 \frac{
@@ -36,7 +35,6 @@ b_i-\sum_{j\ne i}A_{ij}x_j^{(k)}
 }{
 A_{ii}
 }.
-
 $$
 
 每个未知量 $x_i^{(k+1)}$ 只依赖上一轮的解 $x^{(k)}$，因此各行可以并行计算。
@@ -57,20 +55,16 @@ x_new：保存第 k+1 轮结果
 程序使用相对残差作为停止条件：
 
 $$
-
 \frac{\|b-Ax^{(k)}\|_2}{\|b\|_2}
 \leq \text{tol}.
-
 $$
 
 其中
 
 $$
-
 \|b\|_2
 =
 \sqrt{\sum_i b_i^2}.
-
 $$
 
 当 $b=0$ 时，为避免除以零，程序使用绝对残差进行判断。
@@ -275,9 +269,7 @@ for (int i = global_tid; i < n; i += stride)
 之后通过 block 归约和原子累加得到：
 
 $$
-
 \|b-Ax_0\|_2^2.
-
 $$
 
 如果初始解已经满足容差：
@@ -359,9 +351,7 @@ for (int iter = 1; iter <= max_iter; ++iter)
 Jacobi 迭代要求：
 
 $$
-
 A_{ii}\neq 0.
-
 $$
 
 如果某个线程检测到零对角元：
@@ -401,9 +391,7 @@ if (state->zero_diagonal)
 每次 Jacobi 更新完成后，程序计算：
 
 $$
-
 r=b-Ax_{\text{new}}.
-
 $$
 
 ```cpp
@@ -635,16 +623,13 @@ cudaMemcpy(
 主程序构造严格对角占优的三对角矩阵：
 
 $$
-
 A=
 \operatorname{tridiag}(-1,4,-1).
-
 $$
 
 即：
 
 $$
-
 A=
 \begin{bmatrix}
 4 & -1 \\
@@ -653,36 +638,29 @@ A=
 && -1 & 4 & -1\\
 &&& -1 & 4
 \end{bmatrix}.
-
 $$
 
 真实解设置为：
 
 $$
-
 x_{\text{true}}
 =
 [1,2,\ldots,n]^T.
-
 $$
 
 然后在 CPU 上构造：
 
 $$
-
 b=Ax_{\text{true}}.
-
 $$
 
 Jacobi 求解完成后，通过最大绝对误差验证结果：
 
 $$
-
 \max_i
 \left|
 x_i-x_{\text{true},i}
 \right|.
-
 $$
 
 ---
