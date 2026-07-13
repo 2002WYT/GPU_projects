@@ -21,7 +21,7 @@ __global__ void dot_kernel(
     double* partial_sums);
 
 template <typename T>
-__global__ void spmv_csr_vector_kernel(int n, const int *row_ptr, const int *col_idx, 
+__global__ void spmv_csr_scalar_kernel(int n, const int *row_ptr, const int *col_idx, 
     const T *values, const T *x, T *y);
 
 int CG_gpu(
@@ -66,7 +66,6 @@ int CG_gpu(
     double* d_p = nullptr;
     double* d_Ap = nullptr;
     double* d_partial_sums = nullptr;
-    std::vector<double> h_partial_sums(grid_size, 0.0);
 
     auto cleanup = [&]()
     {
@@ -152,7 +151,7 @@ int CG_gpu(
      * 0.1. 计算初始残差 r = b - A*x
      * ========================================================
      */
-    spmv_csr_vector_kernel<<<grid_size, block_size>>>(
+    spmv_csr_scalar_kernel<<<grid_size, block_size>>>(
             n, d_row_ptr, d_col_idx,
             d_values, d_x, d_Ap); // d_Ap = A *d_x
     CG_CHECK_CUDA(cudaGetLastError());
@@ -259,7 +258,7 @@ int CG_gpu(
          *                  p_k^T*A*p_k
          * ====================================================
          */
-        spmv_csr_vector_kernel<<<grid_size, block_size>>>
+        spmv_csr_scalar_kernel<<<grid_size, block_size>>>
             (n, d_row_ptr, d_col_idx, 
             d_values, d_p, d_Ap); // d_Ap = A * d_p
         CG_CHECK_CUDA(cudaGetLastError());
@@ -474,7 +473,7 @@ int CG_gpu(
      * 有少量区别。
      * ========================================================
      */
-    spmv_csr_vector_kernel<<<grid_size, block_size>>>(
+    spmv_csr_scalar_kernel<<<grid_size, block_size>>>(
             n, d_row_ptr, d_col_idx,
             d_values, d_x, d_Ap); // d_Ap = A * d_x
     CG_CHECK_CUDA(cudaGetLastError());
