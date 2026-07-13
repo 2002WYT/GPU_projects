@@ -2,11 +2,7 @@
 
 本项目使用 CUDA 在 GPU 上实现 Jacobi 迭代法，用于求解稀疏线性方程组
 
-$$
-
-Ax=b.
-
-$$
+$$Ax=b.$$
 
 矩阵使用 CSR（Compressed Sparse Row）格式存储。Jacobi 更新、残差计算、收敛判断和停止控制均在 GPU 内完成，CPU 只负责：
 
