@@ -623,7 +623,7 @@ cudaMemcpy(
 
 $$
 A=
-\operatorname{tridiag}(-1,4,-1).
+tridiag(-1,4,-1).
 $$
 
 即：
@@ -642,9 +642,7 @@ $$
 真实解设置为：
 
 $$
-x_{\text{true}}
-=
-[1,2,\ldots,n]^T.
+x_{\text{true}}=[1,2,\ldots,n]^T.
 $$
 
 然后在 CPU 上构造：
