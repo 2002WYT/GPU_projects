@@ -664,50 +664,16 @@ $$
 
 ## 16. 编译
 
-示例 `CMakeLists.txt`：
-
-```cmake
-cmake_minimum_required(VERSION 3.18)
-
-project(gpu_jacobi LANGUAGES CXX CUDA)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-
-set(CMAKE_CUDA_ARCHITECTURES 70)
-
-add_executable(main
-    src/main.cu
-    src/jacobi.cu
-)
-
-target_include_directories(main PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-set_target_properties(main PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-```
-
-对于 NVIDIA Tesla V100，使用：
-
-```cmake
-set(CMAKE_CUDA_ARCHITECTURES 70)
-```
-
-编译：
+从仓库根目录使用统一 CMake 入口：
 
 ```bash
-mkdir -p build
-cd build
-
-cmake ..
-make -j
+cmake -S . -B build \
+  -DGPU_PROJECTS_BUILD_JACOBI=ON
+cmake --build build -j --target jacobi_solver
 ```
+
+默认使用 `sm_70`（NVIDIA V100）。其他 GPU 可在配置时传入
+`-DCMAKE_CUDA_ARCHITECTURES=<架构号>`。
 
 ---
 
@@ -716,13 +682,13 @@ make -j
 默认矩阵规模：
 
 ```bash
-./main
+./build/jacobi_solver
 ```
 
 指定矩阵规模：
 
 ```bash
-./main 100000
+./build/jacobi_solver 100000
 ```
 
 ---

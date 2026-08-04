@@ -1026,34 +1026,18 @@ $$
 
 ## 12. 编译注意事项
 
-`CG.cu` 只声明并调用下面的核函数：
+仓库根目录的 CMake 已把 `ex_CG.cu`、`src/CG.cu` 和
+`src/math.cu` 组成同一个目标，并启用 CUDA 可分离编译：
 
-```cpp
-axpy_kernel
-axpby_kernel
-spmv_csr_scalar_kernel
+```bash
+cmake -S . -B build \
+  -DGPU_PROJECTS_BUILD_CG=ON
+cmake --build build -j --target cg_solver
+./build/cg_solver 100000
 ```
 
-因此编译目标必须同时链接真正定义这些核函数的 `.cu` 文件。
-
-CMake 中可写成类似：
-
-```cmake
-add_executable(cg_main
-    main.cu
-    CG.cu
-    vector_ops.cu
-    spmv.cu
-)
-```
-
-请把 `vector_ops.cu` 和 `spmv.cu` 替换成项目中的实际文件名。
-
-如果使用多个 `.cu` 翻译单元，并且模板核函数定义只放在另一个 `.cu` 文件中，可能出现链接问题。更稳妥的做法是：
-
-- 把模板核函数定义放入 `.cuh`；
-- 或为 `double` 添加显式实例化；
-- 或直接把该核函数改为只支持 `double` 的普通核函数。
+该目标只依赖 CUDA Toolkit，不再要求安装 cuDSS。默认 CUDA 架构为
+`sm_70`；其他 GPU 可通过 `-DCMAKE_CUDA_ARCHITECTURES=<架构号>` 覆盖。
 
 ---
 

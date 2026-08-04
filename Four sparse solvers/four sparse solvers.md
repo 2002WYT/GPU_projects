@@ -54,11 +54,12 @@ Matrix Market 中只存一半的对称矩阵会由读取逻辑展开为完整矩
 
 代码位于：
 
-- [`test_superlu_dist.cpp`](direct_solver_benchmark_bundle/test_superlu_dist.cpp)
-- [`test_pangulu.cpp`](direct_solver_benchmark_bundle/test_pangulu.cpp)
-- [`test_cudss.cpp`](direct_solver_benchmark_bundle/test_cudss.cpp)
-- [`test_strumpack.cpp`](direct_solver_benchmark_bundle/test_strumpack.cpp)
-- [`batch_direct_solvers.py`](direct_solver_benchmark_bundle/batch_direct_solvers.py)
+- [`test_superlu_dist.cpp`](test_superlu_dist.cpp)
+- [`test_pangulu.cpp`](test_pangulu.cpp)
+- [`test_cudss.cpp`](test_cudss.cpp)
+- [`test_strumpack.cpp`](test_strumpack.cpp)
+
+The batch driver used for the recorded cluster run is not included in this repository; `run_all.sh` provides a portable single-matrix runner for locally built adapters.
 
 批处理脚本直接执行每个求解器，没有使用 `mpirun`，所以 MPI 程序以 singleton 方式运行。脚本还在环境变量未预设时执行：
 
