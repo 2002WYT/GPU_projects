@@ -1,13 +1,12 @@
 #pragma once
 #include <cuda_runtime.h>
-#include <library_types.h>
-#include <cudss.h>
 #include <iostream>
 #include <vector>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <iomanip>
+#include <stdexcept>
 
 struct CSRMatrix
 {
@@ -44,17 +43,6 @@ struct SolverOptions
             std::cerr << "CUDA error at " << __FILE__ << ":"  \
                       << __LINE__ << " : "                    \
                       << cudaGetErrorString(err) << std::endl; \
-            return 1;                                         \
-        }                                                     \
-    } while (0)
-
-#define CHECK_CUDSS(call)                                     \
-    do {                                                      \
-        cudssStatus_t status = (call);                        \
-        if (status != CUDSS_STATUS_SUCCESS) {                 \
-            std::cerr << "cuDSS error at " << __FILE__ << ":" \
-                      << __LINE__ << " : status = "           \
-                      << static_cast<int>(status) << std::endl;\
             return 1;                                         \
         }                                                     \
     } while (0)
