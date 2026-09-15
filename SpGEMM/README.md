@@ -50,12 +50,6 @@ Rows are classified into 5 bins by their *estimated output nnz per row* (the "bo
 ├── scripts/
 │   ├── run_suite.py             # serial paired benchmark driver (stdlib only)
 │   └── build.sh                 # builds AMGX + this project
-├── tests/
-│   ├── test_input.cpp           # matrix_io.hpp parser tests
-│   ├── test_suite.py            # run_suite.py logic unit tests
-│   └── test_gpu.py              # generates fixtures and runs both backends
-├── test-artifacts/gpu/*.mtx     # fixed test matrices used by test_gpu.py
-├── test_input_fixture.mtx       # small input for test_input.cpp
 └── docs/superpowers/specs/      # design docs
 ```
 
