@@ -48,6 +48,3 @@ if(AMGX_LIBRARY)
   target_compile_definitions(bench_amgx PRIVATE THRUST_CUB_WRAPPED_NAMESPACE=amgx)
   target_compile_options(bench_amgx PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
 endif()
-
-add_executable(test_input tests/test_input.cpp)
-target_include_directories(test_input PRIVATE include)
