@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
         std::string ap,bp,b_mode="transpose"; uint64_t seed=20260910; int warmup=5,repeat=20;
         for(int i=1;i<argc;++i) {
             std::string key=argv[i], value; auto eq=key.find('=');
-            if(key=="--help") { std::cout << "--a MATRIX [--b MATRIX] [--b-mode transpose|self|random] [--seed 20260910] [--warmup 5] [--repeat 20]\n"; return 0; }
+            if(key=="--help") { std::cout << "--a MATRIX [--b MATRIX] [--b-mode transpose|self|random] [--seed 20260910] [--warmup 5] [--repeat 20]\ntranspose uses A^T for real input and conjugate transpose A^H for complex input\n"; return 0; }
             if(eq!=std::string::npos) { value=key.substr(eq+1); key.resize(eq); }
             else { if(++i>=argc) throw std::runtime_error("missing argument for "+key); value=argv[i]; }
             if(key=="--a") ap=value; else if(key=="--b") bp=value; else if(key=="--b-mode") b_mode=value;
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
         const auto a=spgemm::read_mtx(ap);
         const auto b=bp.empty()
             ?(b_mode=="self"?(a.rows==a.cols?a:throw std::runtime_error("A x A requires a square matrix"))
-              :b_mode=="transpose"?spgemm::transpose(a)
+              :b_mode=="transpose"?spgemm::conjugate_transpose(a)
               :spgemm::generate_b(a,seed))
             :spgemm::read_mtx(bp);
         if(a.cols!=b.rows) throw std::runtime_error("incompatible matrix dimensions");
@@ -61,7 +61,9 @@ int main(int argc, char** argv) {
         if(c.rows!=a.rows || c.cols!=b.cols) throw std::runtime_error("wrong output dimensions");
         auto sorted=times; std::sort(sorted.begin(),sorted.end());
         double median=(sorted[(repeat-1)/2]+sorted[repeat/2])/2;
+        const char* value_type=(a.complex || b.complex)?"complex128":"float64";
         std::cout << std::setprecision(17) << "RESULT {\"backend\":" << quote(spgemm::backend_name())
+          << ",\"value_type\":" << quote(value_type)
           << ",\"a_hash\":" << quote(spgemm::fingerprint(a)) << ",\"b_hash\":" << quote(spgemm::fingerprint(b))
           << ",\"rows\":" << c.rows << ",\"cols\":" << c.cols << ",\"nnz_a\":" << a.val.size()
           << ",\"nnz_b\":" << b.val.size() << ",\"nnz_c\":" << c.val.size() << ",\"b_mode\":" << quote(b_mode) << ",\"seed\":" << seed
