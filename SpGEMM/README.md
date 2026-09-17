@@ -136,62 +136,130 @@ Each backend verifies its own product **in process** (no `.csr` dump) against a 
 
 `run_suite.py` marks any case that fails `VERIFY` as `verify_failed`.
 
-## Benchmark results
+# Benchmark Results
 
-Representative results from a full run over the SuiteSparse matrix set (A × Aᵀ, warmup=2, repeat=5) on a single V100 (16 GB). Speedup is `amgx_median / custom_median`: values > 1 mean `custom` is faster; values < 1 mean `amgx` is faster. All 39 cases where both backends passed verification are listed below.
+## Overview
 
-| Matrix | nnz(C) | amgx median (ms) | custom median (ms) | speedup (amgx/custom) |
-|--------|-------:|-----------------:|-------------------:|----------------------:|
-| cage14 | 236,999,813 | 1673.6 | 55.5 | **30.16×** custom faster |
-| poisson3Db | 21,855,903 | 82.1 | 16.0 | 5.12× custom faster |
-| memplus | 5,121,784 | 14.0 | 3.2 | 4.34× custom faster |
-| appu | 133,137,482 | 337.0 | 105.4 | 3.20× custom faster |
-| Lin | 6,221,600 | 4.8 | 1.7 | 2.77× custom faster |
-| add20 | 213,657 | 0.95 | 0.41 | 2.33× custom faster |
-| bcsstm25 | 15,439 | 0.148 | 0.086 | 1.73× custom faster |
-| torso3 | 21,113,330 | 8.83 | 5.55 | 1.59× custom faster |
-| SiH4 | 1,971,009 | 6.75 | 4.26 | 1.59× custom faster |
-| thermal | 220,320 | 0.226 | 0.145 | 1.56× custom faster |
-| circuit_1 | 6,735,308 | 8.98 | 5.92 | 1.52× custom faster |
-| bcsstm08 | 1,074 | 0.086 | 0.058 | 1.48× custom faster |
-| shallow_water2 | 819,200 | 0.401 | 0.299 | 1.34× custom faster |
-| shallow_water1 | 819,200 | 0.397 | 0.307 | 1.29× custom faster |
-| sherman4 | 10,346 | 0.096 | 0.076 | 1.26× custom faster |
-| G2_circuit | 2,002,996 | 0.727 | 0.578 | 1.26× custom faster |
-| bodyy4 | 332,086 | 0.219 | 0.176 | 1.24× custom faster |
-| Dubcova1 | 998,001 | 0.506 | 0.409 | 1.24× custom faster |
-| G3_circuit | 21,267,134 | 6.60 | 5.45 | 1.21× custom faster |
-| bratu3d | 611,808 | 0.263 | 0.236 | 1.11× custom faster |
-| majorbasis | 8,224,288 | 2.62 | 2.45 | 1.07× custom faster |
-| Dubcova2 | 4,092,529 | 1.53 | 1.44 | 1.06× custom faster |
-| wang4 | 615,132 | 0.280 | 0.264 | 1.06× custom faster |
-| epb2 | 641,858 | 0.800 | 0.758 | 1.06× custom faster |
-| circuit5M_dc | 41,454,781 | 16.66 | 17.91 | 0.93× amgx faster |
-| thermomech_TC | 1,968,538 | 0.728 | 0.797 | 0.91× amgx faster |
-| parabolic_fem | 9,959,935 | 3.40 | 3.76 | 0.91× amgx faster |
-| wathen100 | 1,657,621 | 0.609 | 0.677 | 0.90× amgx faster |
-| thermal2 | 24,018,057 | 6.72 | 8.10 | 0.83× amgx faster |
-| atmosmodd | 31,215,208 | 7.19 | 8.68 | 0.83× amgx faster |
-| FEM_3D_thermal2 | 14,335,500 | 4.71 | 5.90 | 0.80× amgx faster |
-| apache2 | 16,563,324 | 3.75 | 4.81 | 0.78× amgx faster |
-| Dubcova3 | 17,480,761 | 9.85 | 13.58 | 0.73× amgx faster |
-| GaAsH6 | 37,611,445 | 413.1 | 594.8 | 0.69× amgx faster |
-| bundle1 | 24,072,923 | 87.7 | 183.2 | 0.48× amgx faster |
-| Kuu | 1,562,636 | 2.33 | 5.94 | 0.39× amgx faster |
-| bcsstk16 | 1,038,782 | 1.99 | 5.88 | 0.34× amgx faster |
-| nemeth26 | 3,486,190 | 24.1 | 87.1 | 0.28× amgx faster |
-| SiO2 | 104,839,083 | 3550.7 | 28835.8 | 0.12× amgx faster |
+This section summarizes a full paired benchmark of the hand-written CUDA SpGEMM backend (`custom`) against NVIDIA's AMGX library (`amgx`) on **C = A · Bᵀ** (transpose mode), run over a 48-matrix SuiteSparse subset on a single **Tesla V100-SXM2 16 GB** (CUDA 12.4, driver 550.144.03).
 
-**Aggregate** (39 verified pairs; 9 failures where one or both backends errored on the input):
+Each matrix is benchmarked by both backends independently. Each backend runs a warmup phase followed by 5 timed iterations, verifies its own product against an in-process CPU reference (sampled-row exact comparison + 3 Freivalds identity trials, relative tolerance `1e-9 + 1e-8·scale`), and reports its median time. Speedup is reported as `amgx_median / custom_median`: **values > 1 mean `custom` is faster; values < 1 mean `amgx` is faster.** Run order alternates per case to mitigate caching effects.
+
+**Run parameters:** `--b-mode transpose --warmup 2 --repeat 5 --timeout 900`, seed `20260910`.
+
+## Aggregate Results
 
 | Metric | Value |
 |--------|-------|
-| Verified pairs | 39 / 48 |
-| Speedup = amgx_median / custom_median | >1 ⇒ `custom` faster, <1 ⇒ `amgx` faster |
-| **Arithmetic mean speedup** | **2.09×** |
-| **Geometric mean speedup** | **1.17×** |
-| Matrices where `custom` is faster | 24 / 39 |
-| Matrices where `amgx` is faster | 15 / 39 |
-| Coverage (speedup within 0.7–1.5) | 22 / 39 (56.4%) |
+| Total cases | 48 |
+| Verified pairs (both backends passed verification) | 43 |
+| Failed cases | 5 |
+| Verified fraction | 89.6% |
+| **Geometric mean speedup** (outlier-resistant) | **1.21×** (custom faster overall) |
+| Arithmetic mean speedup | 2.09× |
+| Median speedup | 1.22× |
+| Min / Max speedup | 0.12× / 30.18× |
+| `custom` faster | 28 / 43 |
+| `amgx` faster | 15 / 43 |
+| Coverage (speedup within 0.7–1.5) | 20 / 43 (46.5%) |
 
-In words: averaged arithmetically across the 39 verified matrices, `amgx` takes 2.09× the median time of `custom`; averaged geometrically (the outlier-resistant measure), 1.17× — so `custom` is faster overall. `custom`'s largest wins are on matrices with large per-row output work (cage14 at 30.16×, poisson3Db 5.12×, memplus 4.34×); `amgx` still leads on several heavy bin4 expand/sort cases (SiO2, nemeth26, bcsstk16, bundle1). Full per-matrix results are regenerated under `results/` on each run.
+### By value type
+
+| Value type | Verified pairs | Geometric mean | Arithmetic mean |
+|------------|---------------:|---------------:|----------------:|
+| `float64` (real) | 39 | 1.18× | 2.10× |
+| `complex128` (complex) | 4 | 1.53× | 1.96× |
+
+The `custom` backend is faster overall on both value types. Its geometric-mean advantage is modest but consistent (1.18× real, 1.53× complex); the much larger arithmetic means reflect a handful of extreme wins that AMGX does not have a symmetric counterpart to.
+
+## Full Per-Matrix Results
+
+Speedup = `amgx_median / custom_median` (>1 ⇒ `custom` faster). Sorted by speedup, best `custom` wins first.
+
+| Matrix | Type | nnz(C) | amgx median (ms) | custom median (ms) | speedup |
+|--------|------|------:|-----------------:|-------------------:|--------:|
+| cage14 | float64 | 236,999,813 | 1673.75 | 55.47 | **30.18×** custom |
+| poisson3Db | float64 | 21,855,903 | 82.04 | 16.01 | 5.12× custom |
+| memplus | float64 | 5,121,784 | 14.01 | 3.16 | 4.44× custom |
+| appu | float64 | 133,137,482 | 337.17 | 105.34 | 3.20× custom |
+| Chevron2 | complex128 | 2,221,297 | 4.18 | 1.39 | 3.00× custom |
+| Lin | float64 | 6,221,600 | 4.65 | 1.72 | 2.70× custom |
+| iChem_Jacobian | complex128 | 19,000,695 | 27.13 | 10.31 | 2.63× custom |
+| add20 | float64 | 213,657 | 0.95 | 0.40 | 2.40× custom |
+| kim2 | complex128 | 36,578,656 | 79.71 | 43.27 | 1.84× custom |
+| torso3 | float64 | 21,113,330 | 8.84 | 5.01 | 1.77× custom |
+| bcsstm25 | float64 | 15,439 | 0.148 | 0.086 | 1.72× custom |
+| thermal | float64 | 220,320 | 0.230 | 0.146 | 1.58× custom |
+| circuit_1 | float64 | 6,735,308 | 9.20 | 5.92 | 1.56× custom |
+| bcsstm08 | float64 | 1,074 | 0.085 | 0.056 | 1.52× custom |
+| SiH4 | float64 | 1,971,009 | 6.20 | 4.10 | 1.51× custom |
+| shallow_water2 | float64 | 819,200 | 0.396 | 0.303 | 1.31× custom |
+| shallow_water1 | float64 | 819,200 | 0.396 | 0.305 | 1.30× custom |
+| sherman4 | float64 | 10,346 | 0.097 | 0.075 | 1.29× custom |
+| G2_circuit | float64 | 2,002,996 | 0.726 | 0.580 | 1.25× custom |
+| bodyy4 | float64 | 332,086 | 0.216 | 0.175 | 1.24× custom |
+| Dubcova1 | float64 | 998,001 | 0.501 | 0.410 | 1.22× custom |
+| G3_circuit | float64 | 21,267,134 | 6.61 | 5.44 | 1.21× custom |
+| bratu3d | float64 | 611,808 | 0.265 | 0.239 | 1.11× custom |
+| Dubcova2 | float64 | 4,092,529 | 1.558 | 1.441 | 1.08× custom |
+| wang4 | float64 | 615,132 | 0.261 | 0.242 | 1.08× custom |
+| majorbasis | float64 | 8,224,288 | 2.62 | 2.46 | 1.07× custom |
+| epb2 | float64 | 641,858 | 0.799 | 0.758 | 1.05× custom |
+| parabolic_fem | float64 | 9,959,935 | 3.807 | 3.763 | 1.01× custom |
+| circuit5M_dc | float64 | 41,454,781 | 16.98 | 17.92 | 0.95× amgx |
+| thermal2 | float64 | 24,018,057 | 7.66 | 8.11 | 0.94× amgx |
+| thermomech_TC | float64 | 1,968,538 | 0.731 | 0.789 | 0.93× amgx |
+| wathen100 | float64 | 1,657,621 | 0.538 | 0.609 | 0.88× amgx |
+| FEM_3D_thermal2 | float64 | 14,335,500 | 4.72 | 5.89 | 0.80× amgx |
+| apache2 | float64 | 16,563,324 | 3.74 | 4.81 | 0.78× amgx |
+| atmosmodd | float64 | 31,215,208 | 7.19 | 9.55 | 0.75× amgx |
+| GaAsH6 | float64 | 37,611,445 | 413.04 | 590.47 | 0.70× amgx |
+| Dubcova3 | float64 | 17,480,761 | 9.83 | 14.25 | 0.69× amgx |
+| bundle1 | float64 | 24,072,923 | 87.72 | 183.42 | 0.48× amgx |
+| Kuu | float64 | 1,562,636 | 2.30 | 5.91 | 0.39× amgx |
+| windscreen | complex128 | 5,613,426 | 24.26 | 65.20 | 0.37× amgx |
+| bcsstk16 | float64 | 1,038,782 | 1.98 | 5.87 | 0.34× amgx |
+| nemeth26 | float64 | 3,486,190 | 24.06 | 87.20 | 0.28× amgx |
+| SiO2 | float64 | 104,839,083 | 3558.59 | 28734.35 | 0.12× amgx |
+
+## Failed Cases (5)
+
+All five failures are out-of-memory (OOM) errors, not correctness failures — no verified pair failed the CPU reference check.
+
+| Matrix | Failure mode | Root cause |
+|--------|--------------|------------|
+| boyd2 | both OOM | Symmetric matrix with pathological per-row expansion (~142 GB). No 16 GB GPU can hold the product; both backends fail identically. |
+| cage15 | both OOM | Symmetric matrix with even larger expansion than boyd2. Both backends OOM; inherent matrix pathology. |
+| sls | both OOM | Extreme per-row expansion (~23.5 TB). Both backends OOM. |
+| language | amgx OOM | Real matrix with small output (0.1 GB); `custom` succeeds (7.8 ms). AMGX's internal workspace over-allocates on one dense row (nnz ≈ 11.5k), OOM inside `csr_multiply`. |
+| fem_hifreq_circuit | custom OOM | Complex matrix, ~7.7 GB real / ~15.4 GB complex expansion. AMGX succeeds (allocates by actual symbolic structure); `custom`'s sort path reserves scratch by a loose per-row upper bound whose total (9.63 B entries × 16 B = 29.4 GB) exceeds 16 GB. |
+
+The `language` case is an AMGX-side workspace issue, not an algorithmic limitation of the `custom` path. The `fem_hifreq_circuit` case is a known `custom` sort-path memory-estimation weakness: the upper-bound estimate can be up to ~7× the actual output for matrices with heavily duplicated intermediate columns.
+
+## Analysis
+
+### Where `custom` wins
+
+`custom`'s largest wins come from **large per-row output work** — matrices where a small number of rows dominate the computation and the hash-based accumulation path (bins 0–3, shared-memory open-addressing hash) absorbs the work efficiently:
+
+- **cage14 (30.18×):** 237 M output nonzeros; `custom`'s bin classification routes the heavy rows to the hash path and finishes in 55 ms vs AMGX's 1674 ms.
+- **poisson3Db (5.12×), memplus (4.44×), appu (3.20×):** similar structure — concentrated large-output rows where the custom hash path's direct accumulation beats AMGX's symbolic+numeric two-phase approach.
+
+`custom` is also consistently faster on the **small/fast end** (sub-millisecond cases: bcsstm08, sherman4, add20, bodyy4), where AMGX's fixed setup and workspace-construction overhead dominates actual kernel time.
+
+### Where AMGX wins
+
+AMGX leads on **sort-heavy bin-4 matrices** — large, broadly-distributed expansions where the sort path (expand → segmented radix sort → merge) does the bulk of the work:
+
+- **SiO2 (0.12×):** 105 M output nonzeros; `custom`'s two-pass sort path (count then write) takes 28.7 s vs AMGX's 3.6 s. The expand/sort/merge round-trip over ~113 M intermediate products is far more expensive than AMGX's internal structure-reuse and tuned sort.
+- **nemeth26 (0.28×), bcsstk16 (0.34×), windscreen (0.37×), Kuu (0.39×):** the same pattern — moderate outputs (1–6 M) dominated by sort-path rows, where AMGX's approach is leaner.
+- **bundle1 (0.48×), GaAsH6 (0.70×):** large bin-4 outputs where the expand/sort overhead is the bottleneck.
+
+The common thread: when the *majority* of rows are bin-4 (large-output) rather than a *minority* of pathological rows, AMGX's symbolic/numerical separation and workspace reuse win.
+
+### Complex vs real
+
+The complex path (4 verified matrices) shows a larger `custom` advantage (1.53× geometric mean vs 1.18× real), but the sample is small and skewed by Chevron2 (3.0×) and iChem_Jacobian (2.6×). The one amgx-favored complex case (windscreen, 0.37×) is a bin-4-dominant matrix — the same sort-path overhead seen in the real cases.
+
+### Overall takeaway
+
+Across 43 verified matrices, **`custom` is faster overall** (geometric mean 1.21×, median 1.22×, wins 28 of 43). The geometric mean is the outlier-resistant measure and gives a fair picture: `custom`'s typical advantage is ~20%, concentrated in hash-path-amenable matrices with concentrated large-output rows, while AMGX retains a clear lead on sort-dominated workloads where the expand→sort→merge round-trip is the bottleneck.
