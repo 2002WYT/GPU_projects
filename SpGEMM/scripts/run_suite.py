@@ -21,7 +21,8 @@ Usage:
     # Or use run_bench.sh (it just calls this script with defaults).
     #
     # --b-mode: how B is derived from A when --b is omitted.
-    #           transpose = A x Aᵀ (default), self = A x A, random = random
+    #           transpose = A x Aᵀ for real input or A x Aᴴ for complex input
+    #                       (default), self = A x A, random = random
     #                      pattern with the given --seed.
     # Output: results/<UTC timestamp>/ with
     #           results.csv  — per-matrix amgx vs custom median timings + speedup
@@ -46,7 +47,7 @@ import sys
 import time
 
 DEFAULT_MATRIX_DIR = '/home/bingxing2/home/scx8ale/soft/works/mtxs'
-PAIR_FIELDS = ('a_hash', 'b_hash', 'rows', 'cols', 'nnz_a', 'nnz_b', 'nnz_c', 'seed', 'warmup', 'repeat')
+PAIR_FIELDS = ('value_type', 'a_hash', 'b_hash', 'rows', 'cols', 'nnz_a', 'nnz_b', 'nnz_c', 'seed', 'warmup', 'repeat')
 
 
 def benchmark_command(bin_dir, backend, a, b, b_mode, seed, warmup, repeat):
@@ -79,6 +80,8 @@ def validate_record(record, backend, seed, warmup, repeat):
     for key in ('a_hash', 'b_hash'):
         if not isinstance(record.get(key), str) or not record[key]:
             raise ValueError('invalid ' + key)
+    if record.get('value_type') not in ('float64', 'complex128'):
+        raise ValueError('invalid value_type')
     for key in ('rows', 'cols', 'nnz_a', 'nnz_b', 'nnz_c'):
         if type(record.get(key)) is not int or record[key] < 0:
             raise ValueError('invalid ' + key)
@@ -88,6 +91,14 @@ def validate_record(record, backend, seed, warmup, repeat):
     times = record.get('times_ms')
     if not isinstance(times, list) or len(times) != repeat or not all(positive(t) for t in times):
         raise ValueError('invalid times_ms')
+
+
+def validate_pair(records):
+    if set(records) != {'amgx', 'custom'}:
+        raise ValueError('missing backend record')
+    for key in PAIR_FIELDS:
+        if records['amgx'].get(key) != records['custom'].get(key):
+            raise ValueError('backend mismatch for ' + key)
 
 
 def aggregate(rows):
@@ -188,6 +199,13 @@ def run_case(index, a, b, b_mode, args, root):
             row['status'] = 'benchmark_failed'
         row['error'] = '; '.join(problems)
     elif 'amgx' in records and 'custom' in records:
+        try:
+            validate_pair(records)
+        except ValueError as error:
+            row['status'] = 'benchmark_failed'
+            row['error'] = str(error)
+            write_json(directory / 'case.json', row)
+            return row
         row.update({key: records['amgx'][key] for key in PAIR_FIELDS})
         row['verify_status'] = 'ok'
         row['speedup_amgx_over_custom'] = records['amgx']['median_ms'] / records['custom']['median_ms']
@@ -217,7 +235,7 @@ def main(argv=None):
     parser.add_argument('--a')
     parser.add_argument('--b')
     parser.add_argument('--b-mode', choices=['transpose', 'self', 'random'], default='transpose',
-                        help='how to derive B from A when --b is not given (default: transpose = A x Aᵀ)')
+                        help='derive B when omitted (transpose uses A^T for real input and A^H for complex input)')
     parser.add_argument('--warmup', type=int, default=5)
     parser.add_argument('--repeat', type=int, default=20)
     parser.add_argument('--seed', type=int, default=20260910)
