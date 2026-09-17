@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 // 版本 A：小/中行 shared hash，大行分批 expand → sort → merge。
@@ -17,6 +18,25 @@ namespace {
 using U64 = unsigned long long;
 constexpr int kWarp = 32, kBlock = 128, kMergeBlock = 256, kBins = 5;
 constexpr unsigned kFullMask = 0xffffffffu;
+
+struct ComplexValue { double re, im; };
+
+template<class Value> struct ValueOps;
+template<> struct ValueOps<double> {
+    __host__ __device__ static double zero() { return 0.0; }
+    __host__ __device__ static double multiply(double a, double b) { return a * b; }
+    __device__ static void atomic_add(double* destination, double value) { atomicAdd(destination, value); }
+};
+template<> struct ValueOps<ComplexValue> {
+    __host__ __device__ static ComplexValue zero() { return {0.0, 0.0}; }
+    __host__ __device__ static ComplexValue multiply(ComplexValue a, ComplexValue b) {
+        return {a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
+    }
+    __device__ static void atomic_add(ComplexValue* destination, ComplexValue value) {
+        atomicAdd(&destination->re, value.re);
+        atomicAdd(&destination->im, value.im);
+    }
+};
 
 void check(cudaError_t error) {
     if (error != cudaSuccess) throw std::runtime_error(cudaGetErrorString(error));
@@ -58,17 +78,26 @@ struct Buffer {
 };
 
 // 轻量视图统一传递 CSR 和临时输出，缩短 kernel 参数列表。
-struct CSRView { const int* row; const int* col; const double* val; };
-struct RowOutput { const U64* offsets; int* col; double* val; int* counts; };
+template<class Value>
+struct CSRView { const int* row; const int* col; const Value* val; };
+template<class Value>
+struct RowOutput { const U64* offsets; int* col; Value* val; int* counts; };
 
+template<class Value>
 struct DeviceCSR {
     int rows, cols;
     Buffer<int> row, col;
-    Buffer<double> val;
+    Buffer<Value> val;
     explicit DeviceCSR(const HostCSR& h) : rows(h.rows), cols(h.cols) {
-        row.upload(h.row); col.upload(h.col); val.upload(h.val);
+        row.upload(h.row); col.upload(h.col);
+        std::vector<Value> values(h.val.size());
+        for (size_t i = 0; i < values.size(); ++i) {
+            if constexpr (std::is_same<Value, double>::value) values[i] = h.val[i];
+            else values[i] = {h.val[i], h.complex ? h.imag[i] : 0.0};
+        }
+        val.upload(values);
     }
-    CSRView view() const { return {row.p, col.p, val.p}; }
+    CSRView<Value> view() const { return {row.p, col.p, val.p}; }
 };
 
 __device__ unsigned hash_key(int key) {
@@ -77,20 +106,21 @@ __device__ unsigned hash_key(int key) {
     return x;
 }
 
-template<int H>
-__device__ void hash_add(int* keys, double* vals, int col, double value) {
+template<class Value, int H>
+__device__ void hash_add(int* keys, Value* vals, int col, Value value) {
     unsigned slot = hash_key(col) & (H - 1);
     while (true) {
         const int old = atomicCAS(keys + slot, -1, col);
         if (old == -1 || old == col) break;
         slot = (slot + 1) & (H - 1);
     }
-    atomicAdd(vals + slot, value);
+    ValueOps<Value>::atomic_add(vals + slot, value);
 }
 
 // raw_count = Σ nnz(B[j])；upper = min(raw_count, B.cols)。
 // upper 用于输出预留，排序展开必须使用未截断的 raw_count。
-__global__ void classify(int n, int ncols, CSRView a, CSRView b,
+template<class Value>
+__global__ void classify(int n, int ncols, CSRView<Value> a, CSRView<Value> b,
                          U64* upper, U64* raw_count, int* bins, int* sizes, int* counts) {
     const int r = blockIdx.x * (blockDim.x / kWarp) + threadIdx.x / kWarp;
     const int lane = threadIdx.x % kWarp;
@@ -110,24 +140,24 @@ __global__ void classify(int n, int ncols, CSRView a, CSRView b,
 }
 
 // 每个 8/32 线程组处理一行；哈希表装载率上界为 0.5。
-template<int H, int GROUP>
-__global__ void small_rows(int num, const int* rows, CSRView a, CSRView b, RowOutput out) {
+template<class Value, int H, int GROUP>
+__global__ void small_rows(int num, const int* rows, CSRView<Value> a, CSRView<Value> b, RowOutput<Value> out) {
     constexpr int GROUPS = kBlock / GROUP;
     static_assert(GROUP == 8 || GROUP == kWarp, "unsupported group size");
     __shared__ int keys[GROUPS * H];
-    __shared__ double vals[GROUPS * H];
+    __shared__ Value vals[GROUPS * H];
     const int group = threadIdx.x / GROUP, lane = threadIdx.x % GROUP;
     const int q = blockIdx.x * GROUPS + group;
     if (q >= num) return;
     const int r = rows[q], base = group * H;
     const unsigned mask = GROUP == kWarp ? kFullMask : (0xffu << (threadIdx.x % kWarp / GROUP * GROUP));
-    for (int slot = lane; slot < H; slot += GROUP) { keys[base + slot] = -1; vals[base + slot] = 0.; }
+    for (int slot = lane; slot < H; slot += GROUP) { keys[base + slot] = -1; vals[base + slot] = ValueOps<Value>::zero(); }
     __syncwarp(mask);
     for (long long p = a.row[r]; p < a.row[r + 1]; ++p) {
         const int j = a.col[p];
-        const double value = a.val[p];
+        const Value value = a.val[p];
         for (long long k = static_cast<long long>(b.row[j]) + lane; k < b.row[j + 1]; k += GROUP)
-            hash_add<H>(keys + base, vals + base, b.col[k], value * b.val[k]);
+            hash_add<Value, H>(keys + base, vals + base, b.col[k], ValueOps<Value>::multiply(value, b.val[k]));
     }
     __syncwarp(mask);
     int cursor = 0;
@@ -145,21 +175,21 @@ __global__ void small_rows(int num, const int* rows, CSRView a, CSRView b, RowOu
 }
 
 // 每个 block 处理一行，多个 warp 分担 A[r] 的非零项。
-template<int H>
-__global__ void medium_rows(int num, const int* rows, CSRView a, CSRView b, RowOutput out) {
+template<class Value, int H>
+__global__ void medium_rows(int num, const int* rows, CSRView<Value> a, CSRView<Value> b, RowOutput<Value> out) {
     const int q = blockIdx.x;
     if (q >= num) return;
     const int r = rows[q], lane = threadIdx.x % kWarp, warp = threadIdx.x / kWarp;
     __shared__ int keys[H], cursor;
-    __shared__ double vals[H];
-    for (int slot = threadIdx.x; slot < H; slot += kBlock) { keys[slot] = -1; vals[slot] = 0.; }
+    __shared__ Value vals[H];
+    for (int slot = threadIdx.x; slot < H; slot += kBlock) { keys[slot] = -1; vals[slot] = ValueOps<Value>::zero(); }
     if (threadIdx.x == 0) cursor = 0;
     __syncthreads();
     for (long long p = static_cast<long long>(a.row[r]) + warp; p < a.row[r + 1]; p += kBlock / kWarp) {
         const int j = a.col[p];
-        const double value = a.val[p];
+        const Value value = a.val[p];
         for (long long k = static_cast<long long>(b.row[j]) + lane; k < b.row[j + 1]; k += kWarp)
-            hash_add<H>(keys, vals, b.col[k], value * b.val[k]);
+            hash_add<Value, H>(keys, vals, b.col[k], ValueOps<Value>::multiply(value, b.val[k]));
     }
     __syncthreads();
     for (int slot = threadIdx.x; slot < H; slot += kBlock) {
@@ -188,8 +218,9 @@ __global__ void relative_offsets(int num, const U64* offsets, int first, U64* lo
 }
 
 // 展开所有标量乘积；各 warp 原子申请互不重叠的区间。
-__global__ void expand_rows(int num, const int* rows, CSRView a, CSRView b,
-                            const U64* offsets, int* col, double* val) {
+template<class Value>
+__global__ void expand_rows(int num, const int* rows, CSRView<Value> a, CSRView<Value> b,
+                            const U64* offsets, int* col, Value* val) {
     const int q = blockIdx.x;
     if (q >= num) return;
     const int r = rows[q], lane = threadIdx.x % kWarp, warp = threadIdx.x / kWarp;
@@ -202,16 +233,16 @@ __global__ void expand_rows(int num, const int* rows, CSRView a, CSRView b,
         start = __shfl_sync(kFullMask, start, 0);
         for (long long k = static_cast<long long>(b.row[j]) + lane; k < b.row[j + 1]; k += kWarp) {
             const U64 at = offsets[q] + start + (k - b.row[j]);
-            col[at] = b.col[k]; val[at] = a.val[p] * b.val[k];
+            col[at] = b.col[k]; val[at] = ValueOps<Value>::multiply(a.val[p], b.val[k]);
         }
     }
 }
 
 // 分 tile 扫描相同列的连续段，last_col/runs 处理跨 tile 的重复列。
 // 段首先赋值，其他成员再原子累加；同步防止赋值覆盖累加结果。
-template<int BLOCK = kMergeBlock>
+template<class Value, int BLOCK = kMergeBlock>
 __global__ void merge_rows(int num, const int* rows, const U64* offsets,
-                           const int* col, const double* val, RowOutput out) {
+                           const int* col, const Value* val, RowOutput<Value> out) {
     const int q = blockIdx.x;
     if (q >= num) return;
     const int r = rows[q], tid = threadIdx.x;
@@ -223,7 +254,7 @@ __global__ void merge_rows(int num, const int* rows, const U64* offsets,
         const U64 index = tile + tid;
         const bool valid = index < length;
         const int key = valid ? col[base + index] : INT_MAX;
-        const double value = valid ? val[base + index] : 0.;
+        const Value value = valid ? val[base + index] : ValueOps<Value>::zero();
         tile_col[tid] = key;
         __syncthreads();
         const bool start = valid && (key != (tid == 0 ? last_col : tile_col[tid - 1]));
@@ -238,7 +269,7 @@ __global__ void merge_rows(int num, const int* rows, const U64* offsets,
         const int exclusive = scan[tid] - int(start);
         if (start) { out.col[dest + runs + exclusive] = key; out.val[dest + runs + exclusive] = value; }
         __syncthreads();
-        if (valid && !start) atomicAdd(out.val + dest + runs + exclusive - 1, value);
+        if (valid && !start) ValueOps<Value>::atomic_add(out.val + dest + runs + exclusive - 1, value);
         __syncthreads();
         if (tid == BLOCK - 1) {
             const int last = int((length - tile < BLOCK ? length - tile : BLOCK) - 1);
@@ -254,7 +285,8 @@ __global__ void widen_counts(int n, const int* counts, U64* wide) {
     if (i <= size_t(n)) wide[i] = U64(counts[i]);
 }
 
-__global__ void compact(int n, RowOutput temp, const U64* exact, int* row, int* col, double* val) {
+template<class Value>
+__global__ void compact(int n, RowOutput<Value> temp, const U64* exact, int* row, int* col, Value* val) {
     const int r = blockIdx.x * (blockDim.x / kWarp) + threadIdx.x / kWarp;
     const int lane = threadIdx.x % kWarp;
     if (r >= n) return;
@@ -266,16 +298,17 @@ __global__ void compact(int n, RowOutput temp, const U64* exact, int* row, int* 
     if (lane == 0) { row[r] = int(first); if (r == n - 1) row[n] = int(end); }
 }
 
+template<class Value>
 class Custom final : public Backend {
-    DeviceCSR a, b;
+    DeviceCSR<Value> a, b;
     Buffer<U64> upper, raw_count, temp_offsets, wide_counts, exact_offsets;
     Buffer<U64> large_counts, large_offsets, batch_offsets;
     Buffer<int> bins, bin_sizes, row_counts, temp_col, expand_col, sort_col, out_row, out_col;
-    Buffer<double> temp_val, expand_val, sort_val, out_val;
+    Buffer<Value> temp_val, expand_val, sort_val, out_val;
     Buffer<unsigned char> scratch;
     int nnz = 0;
 
-    RowOutput temporary() const { return {temp_offsets.p, temp_col.p, temp_val.p, row_counts.p}; }
+    RowOutput<Value> temporary() const { return {temp_offsets.p, temp_col.p, temp_val.p, row_counts.p}; }
     const int* bin_rows(int bin) const { return bins.p + size_t(bin) * a.rows; }
 
     void scan(const U64* input, U64* output, int count) {
@@ -292,7 +325,7 @@ class Custom final : public Backend {
         row_counts.reserve(size); wide_counts.reserve(size); exact_offsets.reserve(size);
         bins.reserve(size_t(n) * kBins); bin_sizes.reserve(kBins);
         check(cudaMemset(bin_sizes.p, 0, kBins * sizeof(int)));
-        classify<<<blocks(n, kBlock / kWarp), kBlock>>>(
+        classify<Value><<<blocks(n, kBlock / kWarp), kBlock>>>(
             n, b.cols, a.view(), b.view(), upper.p, raw_count.p, bins.p, bin_sizes.p, row_counts.p);
         check(cudaGetLastError());
         scan(upper.p, temp_offsets.p, n + 1);
@@ -305,17 +338,17 @@ class Custom final : public Backend {
     }
 
     void hash_rows(const std::array<int, kBins>& sizes) {
-        const CSRView av = a.view(), bv = b.view();
-        const RowOutput out = temporary();
-        if (sizes[0]) small_rows<64, 8><<<blocks(sizes[0], 16), kBlock>>>(sizes[0], bin_rows(0), av, bv, out);
-        if (sizes[1]) small_rows<256, 32><<<blocks(sizes[1], 4), kBlock>>>(sizes[1], bin_rows(1), av, bv, out);
-        if (sizes[2]) medium_rows<1024><<<sizes[2], kBlock>>>(sizes[2], bin_rows(2), av, bv, out);
-        if (sizes[3]) medium_rows<2048><<<sizes[3], kBlock>>>(sizes[3], bin_rows(3), av, bv, out);
+        const CSRView<Value> av = a.view(), bv = b.view();
+        const RowOutput<Value> out = temporary();
+        if (sizes[0]) small_rows<Value, 64, 8><<<blocks(sizes[0], 16), kBlock>>>(sizes[0], bin_rows(0), av, bv, out);
+        if (sizes[1]) small_rows<Value, 256, 32><<<blocks(sizes[1], 4), kBlock>>>(sizes[1], bin_rows(1), av, bv, out);
+        if (sizes[2]) medium_rows<Value, 1024><<<sizes[2], kBlock>>>(sizes[2], bin_rows(2), av, bv, out);
+        if (sizes[3]) medium_rows<Value, 2048><<<sizes[3], kBlock>>>(sizes[3], bin_rows(3), av, bv, out);
         check(cudaGetLastError());
     }
 
     void sort_batch(int count, int tuples, const int* rows) {
-        expand_rows<<<count, kBlock>>>(count, rows, a.view(), b.view(), batch_offsets.p, expand_col.p, expand_val.p);
+        expand_rows<Value><<<count, kBlock>>>(count, rows, a.view(), b.view(), batch_offsets.p, expand_col.p, expand_val.p);
         check(cudaGetLastError());
         // CUB 指针接口要求输入/输出区间不重叠。
         size_t bytes = 0;
@@ -326,7 +359,7 @@ class Custom final : public Backend {
         check(cub::DeviceSegmentedRadixSort::SortPairs(scratch.p, bytes,
             expand_col.p, sort_col.p, expand_val.p, sort_val.p,
             tuples, count, batch_offsets.p, batch_offsets.p + 1, 0, 32));
-        merge_rows<<<count, kMergeBlock>>>(count, rows, batch_offsets.p, sort_col.p, sort_val.p, temporary());
+        merge_rows<Value><<<count, kMergeBlock>>>(count, rows, batch_offsets.p, sort_col.p, sort_val.p, temporary());
         check(cudaGetLastError());
     }
 
@@ -340,11 +373,11 @@ class Custom final : public Backend {
         std::vector<U64> offsets(size_t(count) + 1);
         check(cudaMemcpy(offsets.data(), large_offsets.p, offsets.size() * sizeof(U64), cudaMemcpyDeviceToHost));
 
-        // 两套 (int,double) 数组共用当前空闲显存的 1/4，CUB scratch 另计。
+        // 两套 (column,value) 数组共用当前空闲显存的 1/4，CUB scratch 另计。
         // 复用已有容量，分配量不超过实际展开总量。
         size_t free_bytes = 0, total_bytes = 0;
         check(cudaMemGetInfo(&free_bytes, &total_bytes));
-        const U64 budget = free_bytes / 4 / (2 * (sizeof(int) + sizeof(double)));
+        const U64 budget = free_bytes / 4 / (2 * (sizeof(int) + sizeof(Value)));
         const U64 cached = std::min({expand_col.capacity, expand_val.capacity, sort_col.capacity, sort_val.capacity});
         const U64 cap = std::min({offsets.back(), std::max(budget, cached), U64(0x40000000u)});
         for (int i = 0; i < count; ++i)
@@ -371,7 +404,7 @@ class Custom final : public Backend {
         check(cudaMemcpy(&total, exact_offsets.p + n, sizeof(total), cudaMemcpyDeviceToHost));
         if (total > INT_MAX) throw std::overflow_error("product nnz exceeds int32 CSR range");
         nnz = int(total); out_col.reserve(nnz); out_val.reserve(nnz);
-        compact<<<blocks(n, kBlock / kWarp), kBlock>>>(n, temporary(), exact_offsets.p, out_row.p, out_col.p, out_val.p);
+        compact<Value><<<blocks(n, kBlock / kWarp), kBlock>>>(n, temporary(), exact_offsets.p, out_row.p, out_col.p, out_val.p);
         check(cudaGetLastError());
     }
 
@@ -392,12 +425,19 @@ public:
 
     HostCSR download() override {
         HostCSR h;
-        h.rows = a.rows; h.cols = b.cols;
+        h.rows = a.rows; h.cols = b.cols; h.complex = !std::is_same<Value, double>::value;
         h.row.resize(size_t(h.rows) + 1); h.col.resize(nnz); h.val.resize(nnz);
         check(cudaMemcpy(h.row.data(), out_row.p, h.row.size() * sizeof(int), cudaMemcpyDeviceToHost));
         if (nnz) {
             check(cudaMemcpy(h.col.data(), out_col.p, size_t(nnz) * sizeof(int), cudaMemcpyDeviceToHost));
-            check(cudaMemcpy(h.val.data(), out_val.p, size_t(nnz) * sizeof(double), cudaMemcpyDeviceToHost));
+            if constexpr (std::is_same<Value, double>::value) {
+                check(cudaMemcpy(h.val.data(), out_val.p, size_t(nnz) * sizeof(double), cudaMemcpyDeviceToHost));
+            } else {
+                std::vector<ComplexValue> values(nnz);
+                check(cudaMemcpy(values.data(), out_val.p, size_t(nnz) * sizeof(ComplexValue), cudaMemcpyDeviceToHost));
+                h.imag.resize(nnz);
+                for (int i = 0; i < nnz; ++i) { h.val[i] = values[i].re; h.imag[i] = values[i].im; }
+            }
         }
         return h;
     }
@@ -405,7 +445,8 @@ public:
 } // namespace
 
 std::unique_ptr<Backend> make_backend(const HostCSR& a, const HostCSR& b) {
-    return std::make_unique<Custom>(a, b);
+    if (a.complex || b.complex) return std::make_unique<Custom<ComplexValue>>(a, b);
+    return std::make_unique<Custom<double>>(a, b);
 }
 const char* backend_name() { return "custom"; }
 } // namespace spgemm
