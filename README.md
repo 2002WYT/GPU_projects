@@ -7,7 +7,7 @@ CUDA benchmarks and numerical linear-algebra solvers with reproducible CMake bui
 [![CMake](https://img.shields.io/badge/build-CMake-064F8C?logo=cmake&logoColor=white)](https://cmake.org/)
 [![GPU](https://img.shields.io/badge/benchmarked-NVIDIA%20V100-76B900)](#performance-highlights)
 
-This repository collects GPU implementations of sparse matrix-vector multiplication, stationary and Krylov iterative methods, FP64 GEMM, and adapters for four sparse direct solvers. The default build contains only CUDA Toolkit dependencies; third-party sparse solvers are opt-in.
+This repository collects GPU implementations of sparse matrix-vector multiplication, sparse matrix-matrix multiplication, stationary and Krylov iterative methods, FP64 GEMM, and adapters for four sparse direct solvers. Most subprojects share a single top-level CMake build with only CUDA Toolkit dependencies; the SpGEMM benchmark and the four sparse direct-solver adapters are standalone subprojects built separately.
 
 ## Quick start
 
@@ -40,6 +40,7 @@ CTest runs small GPU smoke tests for SpMV, Jacobi, multicolor Gauss–Seidel, an
 | [Gauss–Seidel](./gauss-seidel) | Graph coloring, SOR, CUB reduction, and CUDA Graph replay | `gauss_seidel_solver` |
 | [Conjugate Gradient](./CG) | CSR SpMV, dot products, AXPY/AXPBY, and true-residual verification | `cg_solver` |
 | [GEMM](./GEMM) | FP64 kernel autotuning, selected kernels, Matrix Market input, and cuBLAS comparison | `gemm_autotune`, `gemm_selected`, `gemm_mtx` |
+| [SpGEMM](./SpGEMM) | Hand-written CUDA SpGEMM vs NVIDIA AMGX, dual-backend timing and in-process CPU verification | `bench_custom`, `bench_amgx` (standalone) |
 | [Sparse solver benchmarks](./Four%20sparse%20solvers) | SuperLU_DIST, PanguLU, cuDSS, and STRUMPACK adapters | opt-in |
 
 Detailed implementation notes and benchmark methodology live inside each project directory:
@@ -48,6 +49,7 @@ Detailed implementation notes and benchmark methodology live inside each project
 - [Jacobi solver notes](./jacobi/README.md)
 - [Gauss–Seidel/SOR notes](./gauss-seidel/README.md)
 - [Conjugate Gradient notes](./CG/README.md)
+- [SpGEMM benchmark notes and V100 results](./SpGEMM/README.md)
 - [Four-solver benchmark report](./Four%20sparse%20solvers/four%20sparse%20solvers.md)
 
 ## Build options
@@ -75,6 +77,8 @@ cmake -S . -B build \
 cmake --build build -j
 ```
 
+SpGEMM is the exception: it has no top-level `GPU_PROJECTS_BUILD_SPGEMM` switch and is not part of the top-level build. Build it standalone from its own directory — see [SpGEMM (standalone build)](#spgemm-standalone-build) below.
+
 ## Run examples
 
 ```bash
@@ -86,6 +90,29 @@ cmake --build build -j
 ```
 
 Run `./build/spmv_compare --help` for the SpMV matrix modes and benchmark arguments. The GEMM executables document their accepted dimensions and Matrix Market inputs in their `--help` output.
+
+## SpGEMM (standalone build)
+
+The SpGEMM benchmark compares a hand-written CUDA sparse matrix-matrix multiplication kernel (`custom`) against NVIDIA's AMGX library (`amgx`) for C = A·Bᵀ, with dual-backend timing and in-process CPU verification (no `.csr` dumps). It is **not** part of the top-level CMake build — it has its own `CMakeLists.txt` and build script. The `custom` backend needs only the CUDA Toolkit; the `amgx` backend additionally requires NVIDIA AMGX 2.5.0.
+
+```bash
+cd SpGEMM
+# build.sh builds AMGX first, then this project (when AMGX_ROOT is set)
+AMGX_ROOT=/path/to/AMGX-2.5.0 CUDA_ARCHITECTURES=70 bash scripts/build.sh
+
+# ...or invoke cmake directly; bench_custom builds with no AMGX
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=70
+cmake --build build --parallel
+```
+
+Run a single matrix:
+
+```bash
+./build/bench_custom --a path/to/A.mtx --b-mode transpose --warmup 2 --repeat 5
+./build/bench_amgx   --a path/to/A.mtx --b-mode transpose --warmup 2 --repeat 5
+```
+
+See the [SpGEMM README](./SpGEMM/README.md) for the bin-classified hash/sort kernel design, the dual-backend verification procedure, and the full 48-matrix V100 benchmark. Note that `scripts/build.sh` and `run_bench.sh` ship with absolute paths from the author's local environment; override the AMGX paths via environment variables and point `--matrix-dir` at your own matrices to reproduce.
 
 ## Optional sparse direct solvers
 
@@ -176,13 +203,14 @@ ncu --section full -o spmv_ncu \
 
 ```text
 GPU_projects/
-├── CMakeLists.txt
+├── CMakeLists.txt          # top-level build (SpMV, Jacobi, Gauss–Seidel, CG, GEMM)
 ├── spmv/
 ├── jacobi/
 ├── gauss-seidel/
 ├── CG/
 ├── GEMM/
-└── Four sparse solvers/
+├── SpGEMM/                  # standalone build — its own CMakeLists.txt + build.sh
+└── Four sparse solvers/     # standalone build — opt-in, external dependencies
 ```
 
 ## Scope and limitations
